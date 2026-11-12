@@ -37,10 +37,25 @@ Test two recipes:
 npm run classify -- --limit 2
 ```
 
-Open `classifications.json`, review every suggestion, and change `approved` to `true` only where correct. Then:
+Start the local review UI:
+
+```bash
+npm run review
+```
+
+Open the URL printed in your terminal. Search by recipe or label, filter by approval status, or sort by lowest confidence. Select a recipe to inspect the AI reasoning and adjust categories and tags using the taxonomy saved with the proposals. **Approve & next** saves the decision and moves to the next matching unapproved recipe. **Save edits** keeps the current approval status, and **Revoke approval** removes an approval.
+
+The UI saves changes to the local review file. Once you're ready to update Mealie, run:
 
 ```bash
 npm run apply
+```
+
+For a custom review file, use the same path with both commands:
+
+```bash
+npm run review -- --input batch.json
+npm run apply -- --input batch.json
 ```
 
 Run the full collection after the test succeeds:
@@ -60,6 +75,18 @@ If you intentionally want approved results to replace existing organizers:
 ```bash
 npm run apply -- --replace-existing
 ```
+
+## Using Bun
+
+Install dependencies with `bun install`, then run the TypeScript CLI directly with Bun:
+
+```bash
+bun src/cli.ts classify --limit 2
+bun src/cli.ts review
+bun src/cli.ts apply
+```
+
+For a custom review file, pass `--input batch.json` to both `review` and `apply`.
 
 ## Review file
 
