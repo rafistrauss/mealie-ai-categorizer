@@ -76,6 +76,18 @@ If you intentionally want approved results to replace existing organizers:
 npm run apply -- --replace-existing
 ```
 
+## Using Bun
+
+Install dependencies with `bun install`, then run the TypeScript CLI directly with Bun:
+
+```bash
+bun src/cli.ts classify --limit 2
+bun src/cli.ts review
+bun src/cli.ts apply
+```
+
+For a custom review file, pass `--input batch.json` to both `review` and `apply`.
+
 ## Review file
 
 Each entry looks like this:
