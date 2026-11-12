@@ -28,6 +28,7 @@ Fill in `.env`:
 - `MEALIE_TOKEN`: a long-lived token from your Mealie user profile.
 - `GEMINI_API_KEY`: your Gemini API key, created in [Google AI Studio](https://aistudio.google.com/app/apikey).
 - `GEMINI_MODEL`: defaults to `gemini-2.5-flash`; change it if necessary for your Gemini API account.
+- `GEMINI_REQUESTS_PER_MINUTE`: optional classifier request limit. Set it to `5` for a five-request-per-minute quota. The `--rpm` flag overrides this setting for one run.
 
 ## Recommended first run
 
@@ -63,6 +64,20 @@ Run the full collection after the test succeeds:
 ```bash
 npm run classify
 ```
+
+To stay within a Gemini quota of five requests per minute, add `--rpm 5`:
+
+```bash
+npm run classify -- --rpm 5
+```
+
+`--rpm` accepts a positive integer and paces Gemini requests within one classifier
+run. At five requests per minute, the first request starts immediately and later
+requests start at least 12 seconds apart. Pacing is optional.
+
+If Gemini returns a 429 rate-limit error, the classifier waits for Gemini's
+retry delay and retries the same recipe up to twice. It waits 60 seconds if
+Gemini omits the delay. Daily quota errors stop the run immediately.
 
 You can also target one or more slugs:
 

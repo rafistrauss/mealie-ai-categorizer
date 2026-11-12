@@ -15,6 +15,7 @@ const { values } = parseArgs({
     output: { type: "string", short: "o", default: command === "taxonomy" ? "taxonomy-report.json" : "classifications.json" },
     input: { type: "string", short: "i", default: "classifications.json" },
     limit: { type: "string" },
+    rpm: { type: "string" },
     slug: { type: "string", multiple: true },
     "replace-existing": { type: "boolean", default: false },
   },
@@ -43,11 +44,12 @@ async function loadFullRecipes(mealie: MealieClient, slugs?: string[], limit?: n
 
 async function classify() {
   const env = config(true);
+  const requestsPerMinute = values.rpm === undefined ? env.GEMINI_REQUESTS_PER_MINUTE : Number(values.rpm);
+  const classifier = new Classifier(env.GEMINI_API_KEY!, env.GEMINI_MODEL, requestsPerMinute);
   const mealie = new MealieClient(env.MEALIE_URL, env.MEALIE_TOKEN);
   const [categories, tags] = await Promise.all([mealie.listCategories(), mealie.listTags()]);
   if (!categories.length && !tags.length) throw new Error("Mealie has no categories or tags. Create a taxonomy first.");
   const recipes = await loadFullRecipes(mealie, values.slug, values.limit ? Number(values.limit) : undefined);
-  const classifier = new Classifier(env.GEMINI_API_KEY!, env.GEMINI_MODEL);
   const classifications = [];
   for (const [index, recipe] of recipes.entries()) {
     progress(index + 1, recipes.length, `Classifying ${recipe.name}`);
@@ -110,7 +112,7 @@ try {
   else if (command === "apply") await apply();
   else if (command === "review") await startReview(values.input!);
   else if (command === "taxonomy") await taxonomy();
-  else throw new Error("Usage: npm run classify -- [--limit N] [--slug SLUG] | npm run review -- [-i FILE] | npm run apply -- [-i FILE] [--replace-existing] | npm run taxonomy");
+  else throw new Error("Usage: npm run classify -- [--limit N] [--slug SLUG] [--rpm N] | npm run review -- [-i FILE] | npm run apply -- [-i FILE] [--replace-existing] | npm run taxonomy");
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);
   process.exitCode = 1;
