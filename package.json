@@ -1,0 +1,23 @@
+{
+  "name": "mealie-ai-categorizer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "classify": "tsx src/cli.ts classify",
+    "apply": "tsx src/cli.ts apply",
+    "taxonomy": "tsx src/cli.ts taxonomy",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "@google/genai": "^1.17.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}
