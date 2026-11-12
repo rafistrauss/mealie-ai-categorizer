@@ -6,6 +6,7 @@ const Env = z.object({
   MEALIE_TOKEN: z.string().min(1),
   GEMINI_API_KEY: z.string().min(1).optional(),
   GEMINI_MODEL: z.string().default("gemini-2.5-flash"),
+  GEMINI_REQUESTS_PER_MINUTE: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
 });
 
 export function config(needsGemini = false) {
