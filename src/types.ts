@@ -13,8 +13,10 @@ export type Ingredient = {
 export type Instruction = { text?: string | null };
 
 export type Recipe = {
+  id?: string;
   slug: string;
   name: string;
+  updatedAt?: string | null;
   description?: string | null;
   recipeCategory?: Organizer[];
   tags?: Organizer[];

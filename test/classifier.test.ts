@@ -53,3 +53,19 @@ test("Gemini stops immediately for daily quotas and caps retries for minute quot
   await assert.rejects(classifier.classify(recipe, [], []), { status: 429 });
   assert.equal(fetch.mock.callCount(), 4);
 });
+
+test("Gemini classifies multiple recipes in one request and matches results by index", async t => {
+  const recipes = [recipe, { slug: "second", name: "Second recipe" }];
+  const fetch = mockFetch(t, async () => Response.json({
+    candidates: [{ content: { parts: [{ text: JSON.stringify([
+      { ...result, index: 2, tags: ["Soup"] },
+      { ...result, index: 1, categories: ["Dinner"] },
+    ]) }] } }],
+  }));
+  const classifier = new Classifier("test-key", "test-model");
+  assert.deepEqual(await classifier.classifyBatch(recipes, ["Dinner"], ["Soup"]), [
+    { ...recipes[0], ...result, categories: ["Dinner"], approved: false },
+    { ...recipes[1], ...result, tags: ["Soup"], approved: false },
+  ]);
+  assert.equal(fetch.mock.callCount(), 1);
+});

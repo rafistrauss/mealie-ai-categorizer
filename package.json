@@ -9,7 +9,7 @@
     "review": "tsx src/cli.ts review",
     "taxonomy": "tsx src/cli.ts taxonomy",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test test/classifier.test.ts test/core.test.ts test/review.test.ts"
+    "test": "node --import tsx --test test/classifier.test.ts test/core.test.ts test/recipe-cache.test.ts test/review.test.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.7",
