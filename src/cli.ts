@@ -1,22 +1,12 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
-import { z } from "zod";
 import { GoogleGenAI } from "@google/genai";
 import { Classifier } from "./classifier.js";
 import { config } from "./config.js";
 import { applyClassification } from "./core.js";
 import { MealieClient } from "./mealie.js";
+import { ReviewFile, startReview } from "./review.js";
 import type { ClassificationFile, Recipe } from "./types.js";
-
-const ReviewFile = z.object({
-  generatedAt: z.string(),
-  mealieUrl: z.string(),
-  taxonomy: z.object({ categories: z.array(z.string()), tags: z.array(z.string()) }),
-  classifications: z.array(z.object({
-    slug: z.string(), name: z.string(), categories: z.array(z.string()), tags: z.array(z.string()),
-    confidence: z.number(), reasoning: z.string(), approved: z.boolean(),
-  })),
-});
 
 const command = process.argv[2];
 const { values } = parseArgs({
@@ -68,7 +58,7 @@ async function classify() {
     taxonomy: { categories: categories.map((x) => x.name), tags: tags.map((x) => x.name) }, classifications,
   };
   await writeFile(values.output!, `${JSON.stringify(file, null, 2)}\n`);
-  console.log(`Wrote ${classifications.length} proposals to ${values.output}. Review them and set approved=true selectively.`);
+  console.log(`Wrote ${classifications.length} proposals to ${values.output}. Open them with npm run review.`);
 }
 
 async function apply() {
@@ -77,7 +67,7 @@ async function apply() {
   const review = ReviewFile.parse(JSON.parse(await readFile(values.input!, "utf8")));
   if (review.mealieUrl.replace(/\/$/, "") !== env.MEALIE_URL) throw new Error("Review file belongs to a different Mealie URL.");
   const approved = review.classifications.filter((x) => x.approved);
-  if (!approved.length) throw new Error("Nothing is approved. Set approved=true on recipes you reviewed.");
+  if (!approved.length) throw new Error("Nothing is approved. Use npm run review to approve proposals.");
   const [categories, tags] = await Promise.all([mealie.listCategories(), mealie.listTags()]);
   for (const [index, item] of approved.entries()) {
     progress(index + 1, approved.length, `Applying ${item.name}`);
@@ -118,8 +108,9 @@ class GeminiForTaxonomy {
 try {
   if (command === "classify") await classify();
   else if (command === "apply") await apply();
+  else if (command === "review") await startReview(values.input!);
   else if (command === "taxonomy") await taxonomy();
-  else throw new Error("Usage: npm run classify -- [--limit N] [--slug SLUG] | npm run apply -- [-i FILE] [--replace-existing] | npm run taxonomy");
+  else throw new Error("Usage: npm run classify -- [--limit N] [--slug SLUG] | npm run review -- [-i FILE] | npm run apply -- [-i FILE] [--replace-existing] | npm run taxonomy");
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);
   process.exitCode = 1;

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Classification review · Mealie AI Categorizer</title>
+  <link rel="stylesheet" href="/review.css">
+  <script src="/review.js" type="module"></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="brand"><span class="mark" aria-hidden="true">✓</span> Mealie AI Categorizer</div>
+    <span>Local review</span>
+  </header>
+  <main>
+    <header class="intro">
+      <div>
+        <h1>Classification review</h1>
+        <p>Check the suggested categories and tags before applying them to Mealie.</p>
+      </div>
+      <div class="progress">
+        <strong id="count">Loading proposals…</strong>
+        <progress id="progress" max="1" value="0" aria-label="Approval progress"></progress>
+      </div>
+    </header>
+    <p id="notice" role="alert" hidden></p>
+    <div id="workspace" class="workspace" hidden>
+      <section class="queue" aria-labelledby="queue-title">
+        <h2 id="queue-title">Recipes</h2>
+        <label for="search">Search recipes</label>
+        <input type="search" id="search" placeholder="Recipe name or label">
+        <div class="filters">
+          <div>
+            <label for="status">Status</label>
+            <select id="status">
+              <option value="all">All proposals</option>
+              <option value="pending">Not approved</option>
+              <option value="approved">Approved</option>
+            </select>
+          </div>
+          <div>
+            <label for="sort">Sort by</label>
+            <select id="sort">
+              <option value="file">File order</option>
+              <option value="confidence">Lowest confidence</option>
+              <option value="name">Recipe name</option>
+            </select>
+          </div>
+        </div>
+        <p id="results" aria-live="polite"></p>
+        <ul id="queue"></ul>
+      </section>
+      <section class="detail" aria-label="Selected proposal">
+        <p id="empty">Choose a recipe to review.</p>
+        <form id="proposal" hidden>
+          <div class="proposal-heading">
+            <span id="badge" class="badge"></span>
+            <span id="confidence"></span>
+          </div>
+          <h2 id="recipe" tabindex="-1"></h2>
+          <div class="reason"><h3>AI reasoning</h3><p id="reason"></p></div>
+          <fieldset id="categories"><legend>Categories</legend></fieldset>
+          <fieldset id="tags"><legend>Tags</legend></fieldset>
+          <div class="actions">
+            <button id="approve" class="primary" type="submit">Approve &amp; next</button>
+            <button id="save" type="button">Save edits</button>
+            <button id="undo" type="button" hidden>Revoke approval</button>
+          </div>
+        </form>
+        <p id="feedback" role="status"></p>
+      </section>
+    </div>
+    <footer id="next-step" hidden>Approvals are saved to the review file. Run <code>npm run apply</code> with the same input file to update Mealie.</footer>
+  </main>
+</body>
+</html>
