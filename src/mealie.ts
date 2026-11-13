@@ -2,6 +2,10 @@ import type { Organizer, Recipe } from "./types.js";
 
 type Page<T> = { items?: T[] } | T[];
 
+export class MealieError extends Error {
+  constructor(message: string, readonly status: number) { super(message); }
+}
+
 export class MealieClient {
   constructor(private baseUrl: string, private token: string) {}
 
@@ -16,7 +20,7 @@ export class MealieClient {
     });
     if (!response.ok) {
       const body = await response.text();
-      throw new Error(`Mealie ${init.method ?? "GET"} ${path} failed (${response.status}): ${body.slice(0, 1000)}`);
+      throw new MealieError(`Mealie ${init.method ?? "GET"} ${path} failed (${response.status}): ${body.slice(0, 1000)}`, response.status);
     }
     return (await response.json()) as T;
   }

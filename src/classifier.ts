@@ -10,7 +10,7 @@ const Result = z.object({
   reasoning: z.string(),
 });
 
-const BatchResult = z.array(Result.extend({ index: z.number().int().min(1) }));
+export class ClassificationError extends Error {}
 
 function recipeInput(recipe: Recipe) {
   return {
@@ -77,7 +77,7 @@ export class Classifier {
     return (await this.classifyBatch([recipe], categories, tags))[0]!;
   }
 
-  async classifyBatch(recipes: Recipe[], categories: string[], tags: string[]): Promise<Classification[]> {
+  async classifyBatch(recipes: Recipe[], categories: string[], tags: string[], onError?: (recipe: Recipe, error: Error) => void): Promise<Classification[]> {
     if (!recipes.length) return [];
     const isBatch = recipes.length > 1;
     const prompt = [
@@ -122,21 +122,36 @@ export class Classifier {
       },
     });
 
-    if (!response.text) throw new Error("Gemini returned an empty classification.");
-    const parsed: unknown = JSON.parse(response.text);
-    const results = isBatch ? BatchResult.parse(parsed) : [{ index: 1, ...Result.parse(parsed) }];
-    const byIndex = new Map(results.map(({ index, ...result }) => [index, result]));
-    if (results.length !== recipes.length || byIndex.size !== recipes.length) {
-      throw new Error("Gemini did not return one classification per recipe.");
+    let entries: unknown[];
+    try {
+      if (!response.text) throw new Error("Gemini returned an empty classification.");
+      const parsed: unknown = JSON.parse(response.text);
+      if (isBatch && !Array.isArray(parsed)) throw new Error("Gemini returned an invalid batch.");
+      entries = isBatch ? parsed as unknown[] : [{ ...Result.parse(parsed), index: 1 }];
+    } catch (error) {
+      const failure = new ClassificationError(error instanceof Error ? error.message : String(error));
+      if (!onError) throw failure;
+      recipes.forEach(recipe => onError(recipe, failure));
+      return [];
     }
-    return recipes.map((recipe, index) => {
-      const result = byIndex.get(index + 1);
-      if (!result) throw new Error(`Gemini did not return a classification for recipe index ${index + 1}.`);
-      if (result.categories.some(name => !categories.includes(name)) || result.tags.some(name => !tags.includes(name))) {
-        throw new Error(`Gemini returned an unknown category or tag for ${recipe.slug}.`);
+    const results: Classification[] = [];
+    for (const [index, recipe] of recipes.entries()) {
+      try {
+        const matches = entries.filter(entry => typeof entry === "object" && entry !== null &&
+          "index" in entry && entry.index === index + 1);
+        if (matches.length !== 1) throw new Error(`Gemini returned ${matches.length} classifications for recipe index ${index + 1}.`);
+        const result = Result.parse(matches[0]);
+        if (result.categories.some(name => !categories.includes(name)) || result.tags.some(name => !tags.includes(name))) {
+          throw new Error(`Gemini returned an unknown category or tag for ${recipe.slug}.`);
+        }
+        results.push({ slug: recipe.slug, name: recipe.name, ...result, approved: false });
+      } catch (error) {
+        const failure = new ClassificationError(error instanceof Error ? error.message : String(error));
+        if (!onError) throw failure;
+        onError(recipe, failure);
       }
-      return { slug: recipe.slug, name: recipe.name, ...result, approved: false };
-    });
+    }
+    return results;
   }
 
   private async generateContent(request: GenerateContentParameters) {

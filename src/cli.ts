@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
-import { GoogleGenAI } from "@google/genai";
+import { ApiError, GoogleGenAI } from "@google/genai";
 import { Classifier } from "./classifier.js";
 import { config } from "./config.js";
 import { applyClassification } from "./core.js";
-import { MealieClient } from "./mealie.js";
+import { MealieClient, MealieError } from "./mealie.js";
 import { RecipeCache } from "./recipe-cache.js";
 import { ReviewFile, startReview } from "./review.js";
 import type { ClassificationFile, Recipe } from "./types.js";
@@ -29,6 +29,13 @@ function progress(done: number, total: number, name: string) {
   console.log(`[${done}/${total}] ${name}`);
 }
 
+function reportRecipeError(action: string, slug: string, error: unknown) {
+  if (error instanceof ApiError && [400, 401, 403, 404, 429].includes(error.status)) throw error;
+  if (error instanceof MealieError && [401, 403, 429].includes(error.status)) throw error;
+  console.error(`Failed to ${action} ${slug}: ${error instanceof Error ? error.message : String(error)}`);
+  process.exitCode = 1;
+}
+
 async function loadFullRecipes(mealie: MealieClient, cache: RecipeCache, slugs?: string[], limit?: number, completed = new Set<string>()): Promise<Recipe[]> {
   let summaries = await mealie.listRecipes();
   if (slugs?.length) {
@@ -44,9 +51,13 @@ async function loadFullRecipes(mealie: MealieClient, cache: RecipeCache, slugs?:
   summaries = limit === undefined ? pending : pending.slice(0, limit);
   const recipes: Recipe[] = [];
   for (const [index, summary] of summaries.entries()) {
-    const { recipe, cached } = await cache.load(summary, () => mealie.getRecipe(summary.slug), values["refresh-cache"]);
-    progress(index + 1, summaries.length, `Loaded ${recipe.name}${cached ? " (cached)" : ""}`);
-    recipes.push(recipe);
+    try {
+      const { recipe, cached } = await cache.load(summary, () => mealie.getRecipe(summary.slug), values["refresh-cache"]);
+      progress(index + 1, summaries.length, `Loaded ${recipe.name}${cached ? " (cached)" : ""}`);
+      recipes.push(recipe);
+    } catch (error) {
+      reportRecipeError("load", summary.slug, error);
+    }
   }
   return recipes;
 }
@@ -77,15 +88,23 @@ async function classify() {
     taxonomy,
     classifications: saved?.classifications ?? [],
   };
+  let added = 0;
   const batches = Math.ceil(recipes.length / batchSize);
   for (let offset = 0; offset < recipes.length; offset += batchSize) {
     const batch = recipes.slice(offset, offset + batchSize);
     progress(offset / batchSize + 1, batches, `Classifying ${batch.length} recipes`);
-    file.classifications.push(...await classifier.classifyBatch(batch, taxonomy.categories, taxonomy.tags));
+    try {
+      const results = await classifier.classifyBatch(batch, taxonomy.categories, taxonomy.tags,
+        (recipe, error) => reportRecipeError("classify", recipe.slug, error));
+      file.classifications.push(...results);
+      added += results.length;
+    } catch (error) {
+      reportRecipeError("classify batch containing " + batch.map(recipe => recipe.slug).join(", "), "", error);
+    }
     previous = await saveProposals(output, file, previous);
   }
   if (!batches && previous === undefined) await saveProposals(output, file, previous);
-  console.log(`Added ${recipes.length} proposals to ${output}. Open them with npm run review.`);
+  console.log(`Added ${added} proposals to ${output}. Open them with npm run review.`);
 }
 
 async function readProposalFile(path: string) {
@@ -121,12 +140,16 @@ async function apply() {
   const [categories, tags] = await Promise.all([mealie.listCategories(), mealie.listTags()]);
   for (const [index, item] of approved.entries()) {
     progress(index + 1, approved.length, `Applying ${item.name}`);
-    const recipe = await mealie.getRecipe(item.slug);
-    if (!values["replace-existing"] && ((recipe.recipeCategory?.length ?? 0) > 0 || (recipe.tags?.length ?? 0) > 0)) {
-      console.log(`  Skipped: already categorized/tagged (use --replace-existing to overwrite).`);
-      continue;
+    try {
+      const recipe = await mealie.getRecipe(item.slug);
+      if (!values["replace-existing"] && ((recipe.recipeCategory?.length ?? 0) > 0 || (recipe.tags?.length ?? 0) > 0)) {
+        console.log(`  Skipped: already categorized/tagged (use --replace-existing to overwrite).`);
+        continue;
+      }
+      await mealie.updateRecipe(applyClassification(recipe, item, categories, tags));
+    } catch (error) {
+      reportRecipeError("apply", item.slug, error);
     }
-    await mealie.updateRecipe(applyClassification(recipe, item, categories, tags));
   }
   console.log("Apply complete.");
 }

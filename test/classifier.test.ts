@@ -86,3 +86,32 @@ test("Gemini receives a simple schema for a full batch and invalid labels are re
   const classifier = new Classifier("test-key", "test-model");
   await assert.rejects(classifier.classifyBatch(recipes, categories, tags), /unknown category or tag/);
 });
+
+for (const invalid of [
+  { ...result, tags: ["Unknown"] },
+  { ...result, confidence: 2 },
+  undefined,
+  "duplicate",
+]) {
+  test(`partial batches preserve valid recipes with invalid result: ${JSON.stringify(invalid)}`, async t => {
+    const recipes = [recipe, { slug: "second", name: "Second" }, { slug: "third", name: "Third" }];
+    const entries: unknown[] = [{ ...result, index: 1 }, { ...result, index: 3 }];
+    if (invalid === "duplicate") entries.push({ ...result, index: 2 }, { ...result, index: 2 });
+    else if (typeof invalid === "object" && invalid) entries.push({ ...invalid, index: 2 });
+    mockFetch(t, async () => Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(entries) }] } }] }));
+    const failures: string[] = [];
+    const results = await new Classifier("test-key", "test-model").classifyBatch(recipes, [], [],
+      (recipe) => { failures.push(recipe.slug); });
+    assert.deepEqual(results.map(item => item.slug), ["mock-recipe", "third"]);
+    assert.deepEqual(failures, ["second"]);
+  });
+}
+
+test("malformed batch JSON reports each affected recipe", async t => {
+  mockFetch(t, async () => Response.json({ candidates: [{ content: { parts: [{ text: "invalid json" }] } }] }));
+  const failures: string[] = [];
+  const results = await new Classifier("test-key", "test-model").classifyBatch(
+    [recipe, { slug: "second", name: "Second" }], [], [], item => { failures.push(item.slug); });
+  assert.deepEqual(results, []);
+  assert.deepEqual(failures, [recipe.slug, "second"]);
+});
