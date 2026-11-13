@@ -75,6 +75,17 @@ npm run classify -- --rpm 5
 run. At five requests per minute, the first request starts immediately and later
 requests start at least 12 seconds apart. Pacing is optional.
 
+By default, each Gemini request classifies up to 16 recipes. A collection of
+226 recipes takes 15 successful requests from scratch. Use `--batch-size N`
+to adjust the batch size and `--limit N` to cap the number of pending recipes
+processed in a run.
+
+The classifier saves proposals after every successful batch. Run the same
+command with the same output file after a quota error or interruption to
+resume. Recipes with saved proposals are skipped by slug, and existing edits
+and approvals are preserved. Use a different `--output` file to generate
+fresh proposals for recipes that already have them.
+
 If Gemini returns a 429 rate-limit error, the classifier waits for Gemini's
 retry delay and retries the same recipe up to twice. It waits 60 seconds if
 Gemini omits the delay. Daily quota errors stop the run immediately.
@@ -84,6 +95,13 @@ You can also target one or more slugs:
 ```bash
 npm run classify -- --slug lemon-blueberry-lasagna --slug another-recipe
 ```
+
+`classify` and `taxonomy` reuse unchanged recipe details from the local
+`.mealie-cache/` directory. They fetch the recipe list and organizers from
+Mealie on every run. New or edited recipes are fetched automatically, and
+pending recipes are sent to Gemini in batches. To reload details for pending recipes, run
+`npm run classify -- --refresh-cache`. You can delete `.mealie-cache/` to
+clear all saved recipe details.
 
 If you intentionally want approved results to replace existing organizers:
 

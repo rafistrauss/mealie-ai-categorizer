@@ -1,10 +1,12 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { GoogleGenAI } from "@google/genai";
 import { Classifier } from "./classifier.js";
 import { config } from "./config.js";
 import { applyClassification } from "./core.js";
 import { MealieClient } from "./mealie.js";
+import { RecipeCache } from "./recipe-cache.js";
 import { ReviewFile, startReview } from "./review.js";
 import type { ClassificationFile, Recipe } from "./types.js";
 
@@ -16,6 +18,8 @@ const { values } = parseArgs({
     input: { type: "string", short: "i", default: "classifications.json" },
     limit: { type: "string" },
     rpm: { type: "string" },
+    "batch-size": { type: "string", default: "16" },
+    "refresh-cache": { type: "boolean", default: false },
     slug: { type: "string", multiple: true },
     "replace-existing": { type: "boolean", default: false },
   },
@@ -25,7 +29,7 @@ function progress(done: number, total: number, name: string) {
   console.log(`[${done}/${total}] ${name}`);
 }
 
-async function loadFullRecipes(mealie: MealieClient, slugs?: string[], limit?: number): Promise<Recipe[]> {
+async function loadFullRecipes(mealie: MealieClient, cache: RecipeCache, slugs?: string[], limit?: number, completed = new Set<string>()): Promise<Recipe[]> {
   let summaries = await mealie.listRecipes();
   if (slugs?.length) {
     const wanted = new Set(slugs);
@@ -33,34 +37,78 @@ async function loadFullRecipes(mealie: MealieClient, slugs?: string[], limit?: n
     const missing = slugs.filter((slug) => !summaries.some((r) => r.slug === slug));
     if (missing.length) throw new Error(`Recipe slug(s) not found: ${missing.join(", ")}`);
   }
-  if (limit !== undefined) summaries = summaries.slice(0, limit);
+  const pending = summaries.filter(r => !completed.has(r.slug));
+  if (pending.length !== summaries.length) {
+    console.log(`Skipping ${summaries.length - pending.length} recipes with saved classifications.`);
+  }
+  summaries = limit === undefined ? pending : pending.slice(0, limit);
   const recipes: Recipe[] = [];
-  for (const [index, recipe] of summaries.entries()) {
-    progress(index + 1, summaries.length, `Loading ${recipe.name}`);
-    recipes.push(await mealie.getRecipe(recipe.slug));
+  for (const [index, summary] of summaries.entries()) {
+    const { recipe, cached } = await cache.load(summary, () => mealie.getRecipe(summary.slug), values["refresh-cache"]);
+    progress(index + 1, summaries.length, `Loaded ${recipe.name}${cached ? " (cached)" : ""}`);
+    recipes.push(recipe);
   }
   return recipes;
 }
 
 async function classify() {
+  const batchSize = Number(values["batch-size"]);
+  if (!Number.isSafeInteger(batchSize) || batchSize < 1) throw new Error("--batch-size must be a positive integer.");
   const env = config(true);
+  const output = values.output!;
+  let previous = await readProposalFile(output);
+  const saved = previous === undefined ? undefined : ReviewFile.parse(JSON.parse(previous));
+  if (saved && saved.mealieUrl.replace(/\/$/, "") !== env.MEALIE_URL) {
+    throw new Error("Output file belongs to a different Mealie URL. Choose another file with --output.");
+  }
   const requestsPerMinute = values.rpm === undefined ? env.GEMINI_REQUESTS_PER_MINUTE : Number(values.rpm);
   const classifier = new Classifier(env.GEMINI_API_KEY!, env.GEMINI_MODEL, requestsPerMinute);
   const mealie = new MealieClient(env.MEALIE_URL, env.MEALIE_TOKEN);
   const [categories, tags] = await Promise.all([mealie.listCategories(), mealie.listTags()]);
   if (!categories.length && !tags.length) throw new Error("Mealie has no categories or tags. Create a taxonomy first.");
-  const recipes = await loadFullRecipes(mealie, values.slug, values.limit ? Number(values.limit) : undefined);
-  const classifications = [];
-  for (const [index, recipe] of recipes.entries()) {
-    progress(index + 1, recipes.length, `Classifying ${recipe.name}`);
-    classifications.push(await classifier.classify(recipe, categories.map((x) => x.name), tags.map((x) => x.name)));
-  }
+  const cache = new RecipeCache(env.MEALIE_URL, env.MEALIE_TOKEN);
+  const completed = new Set(saved?.classifications.map(item => item.slug));
+  const recipes = await loadFullRecipes(mealie, cache, values.slug, values.limit ? Number(values.limit) : undefined, completed);
+  const taxonomy = { categories: categories.map(x => x.name), tags: tags.map(x => x.name) };
   const file: ClassificationFile = {
-    generatedAt: new Date().toISOString(), mealieUrl: env.MEALIE_URL,
-    taxonomy: { categories: categories.map((x) => x.name), tags: tags.map((x) => x.name) }, classifications,
+    ...saved,
+    generatedAt: new Date().toISOString(),
+    mealieUrl: env.MEALIE_URL,
+    taxonomy,
+    classifications: saved?.classifications ?? [],
   };
-  await writeFile(values.output!, `${JSON.stringify(file, null, 2)}\n`);
-  console.log(`Wrote ${classifications.length} proposals to ${values.output}. Open them with npm run review.`);
+  const batches = Math.ceil(recipes.length / batchSize);
+  for (let offset = 0; offset < recipes.length; offset += batchSize) {
+    const batch = recipes.slice(offset, offset + batchSize);
+    progress(offset / batchSize + 1, batches, `Classifying ${batch.length} recipes`);
+    file.classifications.push(...await classifier.classifyBatch(batch, taxonomy.categories, taxonomy.tags));
+    previous = await saveProposals(output, file, previous);
+  }
+  if (!batches && previous === undefined) await saveProposals(output, file, previous);
+  console.log(`Added ${recipes.length} proposals to ${output}. Open them with npm run review.`);
+}
+
+async function readProposalFile(path: string) {
+  try {
+    return await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+async function saveProposals(path: string, file: ClassificationFile, previous: string | undefined) {
+  const content = `${JSON.stringify(file, null, 2)}\n`;
+  const temporary = path + "." + randomUUID() + ".tmp";
+  try {
+    await writeFile(temporary, content, { flag: "wx" });
+    if (await readProposalFile(path) !== previous) {
+      throw new Error(`Proposal file changed during classification: ${path}. Run classify again to resume from the current file.`);
+    }
+    await rename(temporary, path);
+  } finally {
+    await rm(temporary, { force: true });
+  }
+  return content;
 }
 
 async function apply() {
@@ -87,7 +135,8 @@ async function taxonomy() {
   const env = config(true);
   const mealie = new MealieClient(env.MEALIE_URL, env.MEALIE_TOKEN);
   const [categories, tags] = await Promise.all([mealie.listCategories(), mealie.listTags()]);
-  const recipes = await loadFullRecipes(mealie, values.slug, values.limit ? Number(values.limit) : undefined);
+  const cache = new RecipeCache(env.MEALIE_URL, env.MEALIE_TOKEN);
+  const recipes = await loadFullRecipes(mealie, cache, values.slug, values.limit ? Number(values.limit) : undefined);
   const ai = new GeminiForTaxonomy(env.GEMINI_API_KEY!, env.GEMINI_MODEL);
   const report = await ai.run(recipes, categories.map((x) => x.name), tags.map((x) => x.name));
   await writeFile(values.output!, `${JSON.stringify(report, null, 2)}\n`);
@@ -112,7 +161,7 @@ try {
   else if (command === "apply") await apply();
   else if (command === "review") await startReview(values.input!);
   else if (command === "taxonomy") await taxonomy();
-  else throw new Error("Usage: npm run classify -- [--limit N] [--slug SLUG] [--rpm N] | npm run review -- [-i FILE] | npm run apply -- [-i FILE] [--replace-existing] | npm run taxonomy");
+  else throw new Error("Usage: npm run classify -- [--limit N] [--slug SLUG] [--rpm N] [--batch-size N] [--refresh-cache] | npm run review -- [-i FILE] | npm run apply -- [-i FILE] [--replace-existing] | npm run taxonomy -- [--refresh-cache]");
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);
   process.exitCode = 1;
