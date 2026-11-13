@@ -5,7 +5,7 @@ import { Classifier } from "../src/classifier.js";
 const recipe = { slug: "mock-recipe", name: "Mock recipe" };
 const result = { categories: [], tags: [], confidence: 1, reasoning: "Mock result" };
 
-function mockFetch(t: TestContext, implementation: () => Promise<Response>) {
+function mockFetch(t: TestContext, implementation: typeof fetch) {
   const original = globalThis.fetch;
   const mocked = t.mock.fn(implementation);
   globalThis.fetch = mocked;
@@ -68,4 +68,21 @@ test("Gemini classifies multiple recipes in one request and matches results by i
     { ...recipes[1], ...result, tags: ["Soup"], approved: false },
   ]);
   assert.equal(fetch.mock.callCount(), 1);
+});
+
+test("Gemini receives a simple schema for a full batch and invalid labels are rejected locally", async t => {
+  const recipes = Array.from({ length: 16 }, (_, index) => ({ ...recipe, slug: `recipe-${index}` }));
+  const categories = Array.from({ length: 18 }, (_, index) => `Category ${index}`);
+  const tags = Array.from({ length: 21 }, (_, index) => `Tag ${index}`);
+  mockFetch(t, async (_input, init) => {
+    const { generationConfig } = JSON.parse(String(init?.body));
+    const schema = JSON.stringify(generationConfig.responseJsonSchema);
+    assert.match(schema, /"index"/);
+    assert.doesNotMatch(schema, /"(enum|minItems|maxItems|minimum|maximum)"/);
+    return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(
+      recipes.map((_, index) => ({ ...result, index: index + 1, tags: ["Unknown tag"] })),
+    ) }] } }] });
+  });
+  const classifier = new Classifier("test-key", "test-model");
+  await assert.rejects(classifier.classifyBatch(recipes, categories, tags), /unknown category or tag/);
 });
